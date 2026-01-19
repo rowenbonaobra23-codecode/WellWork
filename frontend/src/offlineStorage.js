@@ -245,3 +245,5 @@ export async function retryFailedRequests(apiBaseUrl, token) {
   localStorage.setItem(`${STORAGE_PREFIX}sync_queue`, JSON.stringify(updatedQueue))
 }
 
+
+

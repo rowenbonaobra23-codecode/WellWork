@@ -26,3 +26,9 @@ Thumbs.db
 # backend/user.json
 # backend/notes.json
 
+# Mobile build artifacts
+frontend/android/
+frontend/ios/
+frontend/.capacitor/
+frontend/dist/
+

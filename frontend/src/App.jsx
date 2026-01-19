@@ -56,6 +56,7 @@ import ChatBot from './ChatBot.jsx'
 import { useRandomNotifications } from './useRandomNotifications.js'
 import useTaskReminders from './useTaskReminders.js'
 import { notesStorage, sessionStorage, retryFailedRequests } from './offlineStorage.js'
+import { getApiBaseUrl, initMobileFeatures } from './mobileConfig.js'
 import './App.css'
 
 /**
@@ -94,13 +95,17 @@ function App() {
   /**
    * API BASE URL
    * ------------
-   * Gets backend URL from environment variable or defaults to localhost:5000
+   * Gets backend URL from environment variable or defaults based on platform
+   * - Mobile: Uses IP address (configure in mobileConfig.js)
+   * - Web: Uses localhost:5000
    * useMemo ensures this is only calculated once
    */
-  const apiBaseUrl = useMemo(
-    () => import.meta.env.VITE_API_URL ?? 'http://localhost:5000',
-    [],
-  )
+  const apiBaseUrl = useMemo(() => getApiBaseUrl(), [])
+
+  // Initialize mobile features on mount
+  useEffect(() => {
+    initMobileFeatures()
+  }, [])
 
   /**
    * EFFECT: Load Session from LocalStorage on Mount
