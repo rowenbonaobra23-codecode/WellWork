@@ -49,6 +49,7 @@
  */
 
 import { useState, useEffect } from 'react'
+import { notesStorage, syncQueue } from './offlineStorage.js'
 
 /**
  * NOTES COMPONENT
@@ -57,9 +58,11 @@ import { useState, useEffect } from 'react'
  *   - selectedDate: Currently selected date (YYYY-MM-DD format) or null
  *   - apiBaseUrl: Backend API base URL
  *   - token: JWT authentication token
+ *   - userId: User ID for caching
+ *   - isOfflineMode: Whether backend is offline
  *   - onNoteSaved: Callback function called with updated notes array after save/delete
  */
-function Notes({ selectedDate, apiBaseUrl, token, onNoteSaved }) {
+function Notes({ selectedDate, apiBaseUrl, token, userId, isOfflineMode = false, onNoteSaved }) {
   const [content, setContent] = useState('')
   const [currentNoteId, setCurrentNoteId] = useState(null)
   const [isLoading, setIsLoading] = useState(false)
@@ -90,19 +93,38 @@ function Notes({ selectedDate, apiBaseUrl, token, onNoteSaved }) {
 
   const loadNoteForDate = async (date) => {
     setIsLoading(true)
-    try {
-      const response = await fetch(`${apiBaseUrl}/api/notes`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      })
+    
+    // Try to load from server first (if online)
+    if (!isOfflineMode) {
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/notes`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        })
 
-      if (!response.ok) {
-        throw new Error(`Failed to load notes: ${response.status}`)
+        if (response.ok) {
+          const notes = await response.json()
+          const noteForDate = notes.find((note) => note.date === date)
+          if (noteForDate) {
+            setContent(noteForDate.content)
+            setCurrentNoteId(noteForDate.id)
+          } else {
+            setContent('')
+            setCurrentNoteId(null)
+          }
+          setIsLoading(false)
+          return
+        }
+      } catch (error) {
+        console.log('Backend offline, loading from cache...')
       }
-
-      const notes = await response.json()
-      const noteForDate = notes.find((note) => note.date === date)
+    }
+    
+    // Fallback to localStorage cache
+    try {
+      const cachedNotes = notesStorage.load(userId)
+      const noteForDate = cachedNotes.find((note) => note.date === date)
       if (noteForDate) {
         setContent(noteForDate.content)
         setCurrentNoteId(noteForDate.id)
@@ -111,10 +133,7 @@ function Notes({ selectedDate, apiBaseUrl, token, onNoteSaved }) {
         setCurrentNoteId(null)
       }
     } catch (error) {
-      console.error('Error loading note:', error)
-      if (error.name === 'TypeError' && error.message.includes('fetch')) {
-        alert('Cannot connect to server. Make sure the backend is running.')
-      }
+      console.error('Error loading note from cache:', error)
       setContent('')
     } finally {
       setIsLoading(false)
@@ -124,55 +143,99 @@ function Notes({ selectedDate, apiBaseUrl, token, onNoteSaved }) {
   /**
    * SAVE NOTE HANDLER
    * -----------------
-   * Saves note content to backend.
+   * Saves note content to backend (if online) or localStorage (if offline).
    * 
    * HOW IT WORKS:
-   * - POST request to /api/notes endpoint
-   * - Backend checks if note exists for this date
-   * - If exists: Updates existing note
-   * - If not exists: Creates new note
-   * - Returns all user's notes
-   * - Updates local state and notifies parent component
+   * - If online: POST request to /api/notes endpoint, syncs with server
+   * - If offline: Saves to localStorage and queues for later sync
+   * - Updates local state immediately for instant feedback
+   * - Notifies parent component
    * 
-   * NOTE: Backend handles create vs update logic automatically
+   * OFFLINE MODE:
+   * - Creates temporary note with local ID
+   * - Queues operation for sync when backend comes online
+   * - User can continue working seamlessly
    */
   const handleSave = async () => {
     if (!selectedDate) return
 
     setIsSaving(true)
+    const noteData = {
+      date: selectedDate,
+      content: content.trim(),
+    }
+
+    // Try to save to server first (if online)
+    if (!isOfflineMode) {
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/notes`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(noteData),
+        })
+
+        if (response.ok) {
+          const updatedNotes = await response.json()
+          const savedNote = updatedNotes.find((note) => note.date === selectedDate)
+          if (savedNote) {
+            setCurrentNoteId(savedNote.id)
+          }
+          // Sync with parent component and cache
+          if (onNoteSaved) {
+            onNoteSaved(updatedNotes)
+          }
+          setIsSaving(false)
+          return
+        }
+      } catch (error) {
+        console.log('Backend offline, saving to cache...')
+      }
+    }
+
+    // Offline mode: Save to localStorage and queue for sync
     try {
-      const response = await fetch(`${apiBaseUrl}/api/notes`, {
+      const cachedNotes = notesStorage.load(userId)
+      const existingIndex = cachedNotes.findIndex((note) => note.date === selectedDate)
+      
+      const noteToSave = {
+        id: currentNoteId || `temp_${Date.now()}`,
+        userId: userId,
+        date: selectedDate,
+        content: content.trim(),
+        createdAt: existingIndex >= 0 ? cachedNotes[existingIndex].createdAt : new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }
+
+      if (existingIndex >= 0) {
+        cachedNotes[existingIndex] = noteToSave
+      } else {
+        cachedNotes.push(noteToSave)
+      }
+
+      // Save to localStorage
+      notesStorage.save(userId, cachedNotes)
+      
+      // Update local state
+      setCurrentNoteId(noteToSave.id)
+      
+      // Queue for sync when online
+      syncQueue.add({
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          date: selectedDate,
-          content: content.trim(),
-        }),
+        url: '/api/notes',
+        headers: {},
+        body: noteData
       })
 
-      if (!response.ok) {
-        throw new Error(`Failed to save note: ${response.status}`)
-      }
-
-      const updatedNotes = await response.json()
-      const savedNote = updatedNotes.find((note) => note.date === selectedDate)
-      if (savedNote) {
-        setCurrentNoteId(savedNote.id)
-      }
-      // Sync with parent component
+      // Notify parent component
       if (onNoteSaved) {
-        onNoteSaved(updatedNotes)
+        onNoteSaved(cachedNotes)
       }
     } catch (error) {
-      console.error('Error saving note:', error)
-      if (error.name === 'TypeError' && error.message.includes('fetch')) {
-        alert('Cannot connect to server. Make sure the backend is running on http://localhost:5000')
-      } else {
-        alert(`Failed to save note: ${error.message}`)
-      }
+      console.error('Error saving note to cache:', error)
+      alert('Failed to save note. Please try again.')
     } finally {
       setIsSaving(false)
     }
@@ -186,31 +249,61 @@ function Notes({ selectedDate, apiBaseUrl, token, onNoteSaved }) {
     }
 
     setIsDeleting(true)
-    try {
-      const response = await fetch(`${apiBaseUrl}/api/notes/${currentNoteId}`, {
-        method: 'DELETE',
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      })
 
-      if (!response.ok) {
-        throw new Error(`Failed to delete note: ${response.status}`)
+    // Try to delete from server first (if online)
+    if (!isOfflineMode && !currentNoteId.startsWith('temp_')) {
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/notes/${currentNoteId}`, {
+          method: 'DELETE',
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        })
+
+        if (response.ok) {
+          const updatedNotes = await response.json()
+          setContent('')
+          setCurrentNoteId(null)
+          if (onNoteSaved) {
+            onNoteSaved(updatedNotes)
+          }
+          setIsDeleting(false)
+          return
+        }
+      } catch (error) {
+        console.log('Backend offline, deleting from cache...')
+      }
+    }
+
+    // Offline mode: Delete from localStorage and queue for sync
+    try {
+      const cachedNotes = notesStorage.load(userId)
+      const filteredNotes = cachedNotes.filter((note) => note.id !== currentNoteId)
+      
+      // Save to localStorage
+      notesStorage.save(userId, filteredNotes)
+      
+      // Queue delete for sync (only if it's a real note, not temp)
+      if (!currentNoteId.startsWith('temp_')) {
+        syncQueue.add({
+          method: 'DELETE',
+          url: `/api/notes/${currentNoteId}`,
+          headers: {},
+          body: null
+        })
       }
 
-      const updatedNotes = await response.json()
+      // Update local state
       setContent('')
       setCurrentNoteId(null)
+      
+      // Notify parent component
       if (onNoteSaved) {
-        onNoteSaved(updatedNotes)
+        onNoteSaved(filteredNotes)
       }
     } catch (error) {
-      console.error('Error deleting note:', error)
-      if (error.name === 'TypeError' && error.message.includes('fetch')) {
-        alert('Cannot connect to server. Make sure the backend is running on http://localhost:5000')
-      } else {
-        alert(`Failed to delete note: ${error.message}`)
-      }
+      console.error('Error deleting note from cache:', error)
+      alert('Failed to delete note. Please try again.')
     } finally {
       setIsDeleting(false)
     }
@@ -247,6 +340,19 @@ function Notes({ selectedDate, apiBaseUrl, token, onNoteSaved }) {
         <div className="notes-loading">Loading note...</div>
       ) : (
         <>
+          {isOfflineMode && (
+            <div style={{ 
+              padding: '8px', 
+              marginBottom: '10px', 
+              backgroundColor: '#fff3cd', 
+              border: '1px solid #ffc107',
+              borderRadius: '4px',
+              fontSize: '14px',
+              color: '#856404'
+            }}>
+              ⚠️ Offline mode: Changes are saved locally and will sync when backend is online.
+            </div>
+          )}
           <textarea
             className="notes-textarea"
             value={content}
@@ -272,7 +378,7 @@ function Notes({ selectedDate, apiBaseUrl, token, onNoteSaved }) {
               disabled={isSaving}
               className="notes-save-button"
             >
-              {isSaving ? 'Saving...' : 'Save Note'}
+              {isSaving ? (isOfflineMode ? 'Saving locally...' : 'Saving...') : 'Save Note'}
             </button>
           </div>
         </>

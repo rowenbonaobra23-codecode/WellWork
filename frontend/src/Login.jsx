@@ -109,7 +109,10 @@ function Login({ apiBaseUrl, onAuth }) {
       onAuth({ token: payload.token, user: payload.user })
     } catch (error) {
       if (error.name === 'TypeError' && error.message.includes('fetch')) {
-        setFeedback({ type: 'error', message: 'Cannot connect to server. Make sure the backend is running on http://localhost:5000' })
+        setFeedback({ 
+          type: 'error', 
+          message: 'Cannot connect to backend server. Please make sure the backend is running on http://localhost:5000. If you were previously logged in, your session may be restored when you refresh the page.' 
+        })
       } else {
         setFeedback({ type: 'error', message: error.message || 'An error occurred. Please try again.' })
       }

@@ -55,6 +55,7 @@ import Notification from './Notification.jsx'
 import ChatBot from './ChatBot.jsx'
 import { useRandomNotifications } from './useRandomNotifications.js'
 import useTaskReminders from './useTaskReminders.js'
+import { notesStorage, sessionStorage, retryFailedRequests } from './offlineStorage.js'
 import './App.css'
 
 /**
@@ -79,6 +80,7 @@ function App() {
   const [notice, setNotice] = useState(null)
   const [selectedDate, setSelectedDate] = useState(null)
   const [notes, setNotes] = useState([])
+  const [isOfflineMode, setIsOfflineMode] = useState(false)
   
   /**
    * CUSTOM HOOKS
@@ -101,23 +103,41 @@ function App() {
   )
 
   /**
-   * EFFECT: Backend Health Monitoring
-   * ---------------------------------
+   * EFFECT: Load Session from LocalStorage on Mount
+   * -----------------------------------------------
+   * Restores user session from localStorage if available.
+   * This allows users to stay logged in even after page refresh.
+   */
+  useEffect(() => {
+    const savedSession = sessionStorage.load()
+    if (savedSession) {
+      setSession(savedSession)
+      // Load cached notes for this user
+      const cachedNotes = notesStorage.load(savedSession.user.id)
+      if (cachedNotes.length > 0) {
+        setNotes(cachedNotes)
+        setIsOfflineMode(true)
+      }
+    }
+  }, [])
+
+  /**
+   * EFFECT: Backend Health Monitoring with Auto-Retry
+   * --------------------------------------------------
    * Continuously checks if backend server is online.
+   * When backend comes back online, automatically retries failed requests.
    * 
    * HOW IT WORKS:
    * - Makes GET request to /health endpoint
    * - Checks immediately on mount
    * - Then checks every 5 seconds
    * - Updates serverStatus state based on response
+   * - When backend comes online, retries queued operations
    * - Cleans up on unmount (aborts requests, clears interval)
-   * 
-   * WHY ABORT CONTROLLER?
-   * - Prevents memory leaks if component unmounts during fetch
-   * - Cancels pending requests when component is destroyed
    */
   useEffect(() => {
     const controller = new AbortController()
+    let wasOffline = false
 
     async function checkHealth() {
       try {
@@ -133,11 +153,38 @@ function App() {
           throw new Error(`Health check failed: ${response.status}`)
         }
         await response.json()
+        
+        // Backend is online
         setServerStatus('online')
+        setIsOfflineMode(false)
+        
+        // If we were offline and now online, retry failed requests
+        if (wasOffline && session?.token) {
+          await retryFailedRequests(apiBaseUrl, session.token)
+          // Reload notes from server to sync
+          try {
+            const response = await fetch(`${apiBaseUrl}/api/notes`, {
+              headers: {
+                Authorization: `Bearer ${session.token}`,
+              },
+            })
+            if (response.ok) {
+              const serverNotes = await response.json()
+              setNotes(serverNotes)
+              notesStorage.save(session.user.id, serverNotes)
+            }
+          } catch (error) {
+            console.error('Error syncing notes:', error)
+          }
+        }
+        
+        wasOffline = false
       } catch (error) {
         if (error.name !== 'AbortError') {
           console.error('Health check error:', error)
           setServerStatus('offline')
+          setIsOfflineMode(true)
+          wasOffline = true
         }
       }
     }
@@ -150,12 +197,13 @@ function App() {
       controller.abort()
       clearInterval(interval)
     }
-  }, [apiBaseUrl])
+  }, [apiBaseUrl, session])
 
   /**
    * EFFECT: Load User Notes & Request Notification Permission
    * ---------------------------------------------------------
    * Loads user's notes from backend when they log in.
+   * Falls back to localStorage if backend is offline.
    * Also requests browser notification permission.
    * 
    * WHEN IT RUNS:
@@ -165,9 +213,10 @@ function App() {
    * 
    * PROCESS:
    * 1. If no session token, clears notes
-   * 2. If session exists, fetches notes from /api/notes endpoint
-   * 3. Updates notes state with fetched data
-   * 4. Requests notification permission if not already granted/denied
+   * 2. If session exists, tries to fetch notes from /api/notes endpoint
+   * 3. If offline, loads from localStorage cache
+   * 4. Updates notes state with fetched/cached data
+   * 5. Requests notification permission if not already granted/denied
    */
   useEffect(() => {
     async function loadNotes() {
@@ -176,6 +225,7 @@ function App() {
         return
       }
 
+      // Try to load from server first
       try {
         const response = await fetch(`${apiBaseUrl}/api/notes`, {
           headers: {
@@ -186,9 +236,25 @@ function App() {
         if (response.ok) {
           const userNotes = await response.json()
           setNotes(userNotes)
+          // Cache notes for offline access
+          notesStorage.save(session.user.id, userNotes)
+          setIsOfflineMode(false)
+        } else {
+          // Server error - try loading from cache
+          const cachedNotes = notesStorage.load(session.user.id)
+          if (cachedNotes.length > 0) {
+            setNotes(cachedNotes)
+            setIsOfflineMode(true)
+          }
         }
       } catch (error) {
-        console.error('Error loading notes:', error)
+        // Network error - load from cache
+        console.log('Backend offline, loading from cache...')
+        const cachedNotes = notesStorage.load(session.user.id)
+        if (cachedNotes.length > 0) {
+          setNotes(cachedNotes)
+          setIsOfflineMode(true)
+        }
       }
     }
 
@@ -242,7 +308,7 @@ function App() {
   const healthLabel = {
     checking: 'Checking backend…',
     online: 'Backend is online',
-    offline: 'Backend is offline',
+    offline: isOfflineMode ? 'Offline mode (using cached data)' : 'Backend is offline',
   }[serverStatus]
 
   const stageLabel = stage === 'register' ? 'REGISTER' : 'LOGIN'
@@ -276,13 +342,33 @@ function App() {
                   </button>
                 )}
                 {browserNotificationPermission === 'denied' && (
-                  <p className="notification-denied">Notifications blocked. Enable in browser settings.</p>
+                  <div style={{ 
+                    fontSize: '12px', 
+                    color: '#666', 
+                    marginTop: '8px',
+                    padding: '10px',
+                    backgroundColor: '#f8f9fa',
+                    borderRadius: '6px',
+                    border: '1px solid #e0e0e0',
+                    lineHeight: '1.5'
+                  }}>
+                    <strong style={{ color: '#495057', display: 'block', marginBottom: '4px' }}>
+                      ℹ️ Lock screen notifications are disabled
+                    </strong>
+                    <span style={{ fontSize: '11px', display: 'block' }}>
+                      In-app notifications still work! To enable browser notifications, click the lock icon 
+                      in your address bar → Notifications → Allow, then refresh the page.
+                    </span>
+                  </div>
                 )}
               </div>
               <button type="button" className="secondary" onClick={() => {
+                sessionStorage.clear()
+                notesStorage.clear(session?.user?.id)
                 setSession(null)
                 setSelectedDate(null)
                 setNotes([])
+                setIsOfflineMode(false)
               }}>
                 Log out
               </button>
@@ -301,7 +387,12 @@ function App() {
                   selectedDate={selectedDate}
                   apiBaseUrl={apiBaseUrl}
                   token={session.token}
-                  onNoteSaved={setNotes}
+                  userId={session.user.id}
+                  isOfflineMode={isOfflineMode}
+                  onNoteSaved={(updatedNotes) => {
+                    setNotes(updatedNotes)
+                    notesStorage.save(session.user.id, updatedNotes)
+                  }}
                 />
               </div>
               <div className="chatbot-section">
@@ -338,6 +429,7 @@ function App() {
                   apiBaseUrl={apiBaseUrl}
                   onAuth={(payload) => {
                     setSession(payload)
+                    sessionStorage.save(payload)
                     setNotice(null)
                   }}
                 />
