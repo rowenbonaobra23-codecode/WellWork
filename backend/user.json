@@ -1,0 +1,44 @@
+[
+  {
+    "id": "4577f7bc-cc14-4a49-8acf-93859f66674e",
+    "username": "123123123",
+    "passwordHash": "$2b$10$06kf/b2bXkJ/008hlxLS0evTEwUDK7jvpVT/nITpESiwawS4nSecW",
+    "createdAt": "2025-12-03T16:19:56.303Z"
+  },
+  {
+    "id": "c03a603b-28c4-45da-b6bd-48ab1f35ddaa",
+    "username": "matt",
+    "passwordHash": "$2b$10$qEXPxPuPAs6Eo2rL/d./juPC81B2JwkqOSLaB78vaxrHZlS.Y2Xlq",
+    "createdAt": "2025-12-03T16:21:35.475Z"
+  },
+  {
+    "id": "d7c2439c-7359-446a-83c8-f40b692253d2",
+    "username": "dion",
+    "passwordHash": "$2b$10$APs1LsoetbVeZN6CXNdzke7gurv0iYAKZdVWUVp2Rq360mdpToyOK",
+    "createdAt": "2025-12-03T16:32:14.044Z"
+  },
+  {
+    "id": "5dc6a81f-1e67-4681-9c87-91af972784b2",
+    "username": "dion1",
+    "passwordHash": "$2b$10$3/s8Dd13v/yozK8RPPbVv.dQnGpBencBanZnS1Xu3a46.J7jnvVJG",
+    "createdAt": "2025-12-03T16:33:00.629Z"
+  },
+  {
+    "id": "0dfdf65d-5846-4eb2-8a3e-b880eb72076a",
+    "username": "galve",
+    "passwordHash": "$2b$10$fm1Zp7/kp9Vkg6iiNPELceSKuF.VPm334IVJfOyIbW52AQSH7MWwq",
+    "createdAt": "2025-12-04T10:33:46.388Z"
+  },
+  {
+    "id": "dcc31dbe-59a4-4ff9-8bbd-952286fe7f1a",
+    "username": "k",
+    "passwordHash": "$2b$10$oxWqW78F/XqaPwcHDeOvr.Wjv3Nz567uyRUo1ThHIv7.U4eAVGGz6",
+    "createdAt": "2026-01-14T05:27:37.467Z"
+  },
+  {
+    "id": "e054174b-cb8d-4d90-98df-7183add4485e",
+    "username": "rowen",
+    "passwordHash": "$2b$10$M.G0D8OLbBerpPfPHU1gXe5XT7zG4gy/4NcO4zpKgSxXtvU7d.e.q",
+    "createdAt": "2026-01-14T14:28:45.439Z"
+  }
+]
